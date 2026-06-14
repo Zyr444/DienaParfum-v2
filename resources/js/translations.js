@@ -36,9 +36,9 @@ export const translations = {
             searchFor: "hasil untuk",
             categories: {
                 all: "semua",
-                sweet: "manis",
-                strong: "kuat",
-                vanilla: "vanila"
+                "Men's Fragrance": "Pria",
+                "Women's Fragrance": "Wanita",
+                "Unisex Fragrance": "Unisex"
             },
             lowStock: "⚠ Hampir Habis",
             inStock: "Tersedia",
@@ -126,9 +126,9 @@ export const translations = {
             searchFor: "results for",
             categories: {
                 all: "all",
-                sweet: "sweet",
-                strong: "strong",
-                vanilla: "vanilla"
+                "Men's Fragrance": "Men",
+                "Women's Fragrance": "Women",
+                "Unisex Fragrance": "Unisex"
             },
             lowStock: "⚠ Low Stock",
             inStock: "In Stock",

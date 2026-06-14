@@ -6,11 +6,21 @@ use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
 
 use App\Http\Controllers\ProductController;
+use App\Http\Controllers\AIChatController;
 
 Route::get('/', [ProductController::class, 'index']);
+Route::post('/api/chat-ai', [AIChatController::class, 'chat']);
 
 Route::get('/dashboard', function () {
-    return Inertia::render('Dashboard');
+    $coupons = App\Models\Coupon::where('status', 'active')
+        ->where(function($query) {
+            $query->whereNull('expires_at')
+                  ->orWhere('expires_at', '>', now());
+        })
+        ->get();
+    return Inertia::render('Dashboard', [
+        'coupons' => $coupons
+    ]);
 })->middleware(['auth', 'verified'])->name('dashboard');
 
 Route::middleware('auth')->group(function () {

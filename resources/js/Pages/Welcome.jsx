@@ -2,6 +2,8 @@ import { Head, Link } from '@inertiajs/react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { translations } from '../translations';
+import axios from 'axios';
+
 
 // Helper component for Gold Dust Particles & Smoke
 const SmokeParticles = ({ isFront = false }) => {
@@ -69,7 +71,7 @@ const SmokeParticles = ({ isFront = false }) => {
         </div>
     );
 };
-export default function Welcome({ auth, laravelVersion, phpVersion, products }) {
+export default function Welcome({ auth, laravelVersion, phpVersion, products, coupons = [] }) {
         const [language, setLanguage] = useState('id');
     const t = translations[language];
 
@@ -78,6 +80,9 @@ export default function Welcome({ auth, laravelVersion, phpVersion, products }) 
     const [selectedCategory, setSelectedCategory] = useState('all');
     const [cart, setCart] = useState({});
     const [isCartOpen, setIsCartOpen] = useState(false);
+    const [voucherInput, setVoucherInput] = useState('');
+    const [appliedVoucher, setAppliedVoucher] = useState(null);
+    const [voucherError, setVoucherError] = useState('');
     const [showSplash, setShowSplash] = useState(true);
     const [searchQuery, setSearchQuery] = useState('');
     const [selectedProduct, setSelectedProduct] = useState(null);
@@ -90,6 +95,62 @@ export default function Welcome({ auth, laravelVersion, phpVersion, products }) 
         const timer = setTimeout(() => setShowSplash(false), 2200);
         return () => clearTimeout(timer);
     }, []);
+
+    // AI Chat State
+    const [isAIChatOpen, setIsAIChatOpen] = useState(false);
+    const [aiInput, setAiInput] = useState('');
+    const [isAILoading, setIsAILoading] = useState(false);
+    const [aiMessages, setAiMessages] = useState([
+        {
+            sender: 'ai',
+            text: 'Halo! Saya adalah **Diena AI Scent Guide**. ✦\n\nSaya bisa membantu mencarikan rekomendasi parfum terbaik berdasarkan selera Anda. Coba tanyakan sesuatu seperti:\n- *\"saran parfum cewe yang manis\"*\n- *\"parfum cowok yang segar untuk siang hari\"*\n- *\"parfum mewah dengan aroma bunga\"*\n\nAda aroma tertentu yang sedang Anda cari?',
+            products: []
+        }
+    ]);
+    const chatEndRef = useRef(null);
+
+    // Auto-scroll chat to bottom
+    useEffect(() => {
+        if (chatEndRef.current) {
+            chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
+        }
+    }, [aiMessages, isAILoading]);
+
+    const handleSendAIMessage = async (e) => {
+        e.preventDefault();
+        if (!aiInput.trim() || isAILoading) return;
+        
+        const userMsg = aiInput;
+        setAiInput('');
+        setAiMessages(prev => [...prev, { sender: 'user', text: userMsg, products: [] }]);
+        setIsAILoading(true);
+
+        try {
+            const response = await axios.post('/api/chat-ai', { message: userMsg });
+            setAiMessages(prev => [...prev, {
+                sender: 'ai',
+                text: response.data.message,
+                products: response.data.products || []
+            }]);
+        } catch (err) {
+            console.error(err);
+            setAiMessages(prev => [...prev, {
+                sender: 'ai',
+                text: 'Maaf, terjadi kendala saat menghubungi asisten AI Diena Parfum. Silakan coba kembali.',
+                products: []
+            }]);
+        } finally {
+            setIsAILoading(false);
+        }
+    };
+
+    const formatMessageText = (text) => {
+        return text.split('\n').map((line, i) => {
+            let formatted = line.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+            formatted = formatted.replace(/\*(.*?)\*/g, '<em>$1</em>');
+            return <span key={i} dangerouslySetInnerHTML={{ __html: formatted }} className="block mb-1" />;
+        });
+    };
 
     useEffect(() => {
         const handleScroll = () => setIsNavScrolled(window.scrollY > 50);
@@ -105,10 +166,11 @@ export default function Welcome({ auth, laravelVersion, phpVersion, products }) 
         }).format(number);
     };
 
-    const categories = ['all', 'sweet', 'strong', 'vanilla'];
+    const categories = ['all', 'Men\'s Fragrance', 'Women\'s Fragrance', 'Unisex Fragrance'];
 
     const filteredProducts = products.filter(p => {
-        const matchCat = selectedCategory === 'all' ? true : p.category === selectedCategory;
+        const categoryName = p.category?.title || '';
+        const matchCat = selectedCategory === 'all' ? true : categoryName === selectedCategory;
         const matchSearch = p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
                             p.description.toLowerCase().includes(searchQuery.toLowerCase());
         return matchCat && matchSearch;
@@ -164,6 +226,30 @@ export default function Welcome({ auth, laravelVersion, phpVersion, products }) 
     const cartItemCount = Object.values(cart).reduce((sum, item) => sum + item.quantity, 0);
     const cartTotal = Object.values(cart).reduce((sum, item) => sum + (item.product.price * item.quantity), 0);
 
+    const handleApplyVoucher = (codeToApply = null) => {
+        const targetCode = (typeof codeToApply === 'string' ? codeToApply : voucherInput).trim().toUpperCase();
+        if (!targetCode) {
+            setVoucherError('Masukkan kode voucher.');
+            return;
+        }
+
+        const found = coupons.find(c => c.code.toUpperCase() === targetCode);
+        if (found) {
+            setAppliedVoucher(found);
+            setVoucherError('');
+            setVoucherInput('');
+        } else {
+            setVoucherError('Voucher tidak valid.');
+            setAppliedVoucher(null);
+        }
+    };
+
+    const handleRemoveVoucher = () => {
+        setAppliedVoucher(null);
+        setVoucherError('');
+        setVoucherInput('');
+    };
+
     const handleWhatsAppCheckout = () => {
         if (cartItemCount === 0) return;
         
@@ -171,32 +257,64 @@ export default function Welcome({ auth, laravelVersion, phpVersion, products }) 
         Object.values(cart).forEach(item => {
             message += `- ${item.product.name} (${item.quantity}x) = ${formatRupiah(item.product.price * item.quantity)}\n`;
         });
-        message += `\n*Total: ${formatRupiah(cartTotal)}*`;
+        
+        let total = cartTotal;
+        if (appliedVoucher) {
+            let discount = 0;
+            if (appliedVoucher.type === 'percent') {
+                discount = cartTotal * (parseFloat(appliedVoucher.value) / 100);
+            } else {
+                discount = parseFloat(appliedVoucher.value);
+            }
+            total = Math.max(0, cartTotal - discount);
+            message += `\nSubtotal: ${formatRupiah(cartTotal)}\n`;
+            message += `Diskon Voucher (${appliedVoucher.code}): -${formatRupiah(discount)}\n`;
+        }
+        
+        message += `\n*Total Akhir: ${formatRupiah(total)}*`;
 
         const encodedMessage = encodeURIComponent(message);
         window.open(`https://wa.me/6289531222146?text=${encodedMessage}`, '_blank');
     };
 
-    // Countdown Timer — target: 3 days from now
+    // Countdown Timer — target: 3 days from now, auto-resets when expired
     const [countdown, setCountdown] = useState({ h: '00', m: '00', s: '00' });
     useEffect(() => {
-        const target = new Date();
-        target.setHours(target.getHours() + 72); // 72 jam
-        const saved = localStorage.getItem('diena_promo_end');
-        const end = saved ? new Date(saved) : target;
-        if (!saved) localStorage.setItem('diena_promo_end', end.toISOString());
+        const getOrSetTarget = () => {
+            const saved = localStorage.getItem('diena_promo_end');
+            if (saved) {
+                const parsedDate = new Date(saved);
+                if (!isNaN(parsedDate.getTime()) && parsedDate > new Date()) {
+                    return parsedDate;
+                }
+            }
+            // If no saved target, or saved target is invalid/expired, set a new one
+            const newTarget = new Date();
+            newTarget.setHours(newTarget.getHours() + 72); // 72 hours
+            localStorage.setItem('diena_promo_end', newTarget.toISOString());
+            return newTarget;
+        };
+
+        let end = getOrSetTarget();
+
         const tick = () => {
-            const diff = end - new Date();
-            if (diff <= 0) { setCountdown({ h: '00', m: '00', s: '00' }); return; }
+            let diff = end - new Date();
+            if (diff <= 0) {
+                // Reset on expiration to keep the countdown active
+                end = getOrSetTarget();
+                diff = end - new Date();
+            }
             const h = String(Math.floor(diff / 3600000)).padStart(2, '0');
             const m = String(Math.floor((diff % 3600000) / 60000)).padStart(2, '0');
             const s = String(Math.floor((diff % 60000) / 1000)).padStart(2, '0');
             setCountdown({ h, m, s });
         };
+
         tick();
         const id = setInterval(tick, 1000);
         return () => clearInterval(id);
     }, []);
+
 
     const GoldLeaf = ({ className, delay = 0, yOffset = 20 }) => (
         <motion.svg 
@@ -324,7 +442,12 @@ export default function Welcome({ auth, laravelVersion, phpVersion, products }) 
                             </svg>
                         </button>
                         {auth.user ? (
-                            <Link href={route('dashboard')} className="px-5 py-1.5 rounded-full border border-gray-700 text-xs tracking-wider hover:border-[#D4AF37] hover:text-[#D4AF37] transition-all text-gray-300">{t.nav.dashboard}</Link>
+                            <div className="flex items-center gap-3">
+                                <span className="text-xs text-gray-400 font-light hidden sm:inline">
+                                    Halo, <strong className="text-[#D4AF37] font-semibold">{auth.user.name}</strong>
+                                </span>
+                                <Link href={route('dashboard')} className="px-5 py-1.5 rounded-full border border-gray-700 text-xs tracking-wider hover:border-[#D4AF37] hover:text-[#D4AF37] transition-all text-gray-300">{t.nav.dashboard}</Link>
+                            </div>
                         ) : (
                             <Link href={route('login')} className="px-5 py-1.5 rounded-full border border-gray-700 text-xs tracking-wider hover:border-[#D4AF37] hover:text-[#D4AF37] transition-all text-gray-300">{t.nav.login}</Link>
                         )}
@@ -924,35 +1047,148 @@ export default function Welcome({ auth, laravelVersion, phpVersion, products }) 
                                     </button>
                                 </div>
                                 
-                                <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-4">
-                                    {Object.values(cart).map(item => (
-                                        <div key={item.product.id} className="flex gap-4 items-center bg-[#151515] p-3 rounded-xl border border-gray-800">
-                                            <div className="w-16 h-16 bg-black rounded-lg overflow-hidden flex items-center justify-center p-1 border border-gray-800">
-                                                <img src={item.product.image} className="w-full h-full object-contain mix-blend-screen" alt="" />
+                                <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-6">
+                                    {/* Cart Items */}
+                                    <div className="flex flex-col gap-4">
+                                        {Object.values(cart).map(item => (
+                                            <div key={item.product.id} className="flex gap-4 items-center bg-[#151515] p-3 rounded-xl border border-gray-800">
+                                                <div className="w-16 h-16 bg-black rounded-lg overflow-hidden flex items-center justify-center p-1 border border-gray-800">
+                                                    <img src={item.product.image} className="w-full h-full object-contain mix-blend-screen" alt="" />
+                                                </div>
+                                                <div className="flex-1">
+                                                    <h4 className="text-sm font-serif text-white mb-1">{item.product.name}</h4>
+                                                    <div className="text-xs text-[#D4AF37] font-medium">{formatRupiah(item.product.price)}</div>
+                                                </div>
+                                                <div className="flex items-center bg-[#0a0a0a] border border-gray-700 rounded-lg overflow-hidden">
+                                                    <button onClick={() => removeFromCart(item.product.id)} className="px-3 py-2 text-gray-400 hover:text-white hover:bg-gray-800 transition-colors">-</button>
+                                                    <span className="text-xs w-6 text-center font-bold text-white">{item.quantity}</span>
+                                                    <button onClick={() => addToCart(item.product)} disabled={item.quantity >= item.product.stock} className="px-3 py-2 text-[#D4AF37] hover:text-white hover:bg-gray-800 transition-colors disabled:opacity-50">+</button>
+                                                </div>
                                             </div>
-                                            <div className="flex-1">
-                                                <h4 className="text-sm font-serif text-white mb-1">{item.product.name}</h4>
-                                                <div className="text-xs text-[#D4AF37] font-medium">{formatRupiah(item.product.price)}</div>
-                                            </div>
-                                            <div className="flex items-center bg-[#0a0a0a] border border-gray-700 rounded-lg overflow-hidden">
-                                                <button onClick={() => removeFromCart(item.product.id)} className="px-3 py-2 text-gray-400 hover:text-white hover:bg-gray-800 transition-colors">-</button>
-                                                <span className="text-xs w-6 text-center font-bold text-white">{item.quantity}</span>
-                                                <button onClick={() => addToCart(item.product)} disabled={item.quantity >= item.product.stock} className="px-3 py-2 text-[#D4AF37] hover:text-white hover:bg-gray-800 transition-colors disabled:opacity-50">+</button>
-                                            </div>
-                                        </div>
-                                    ))}
-                                    {cartItemCount === 0 && (
+                                        ))}
+                                    </div>
+
+                                    {cartItemCount === 0 ? (
                                         <div className="text-center text-gray-500 mt-20 flex flex-col items-center gap-4">
                                             <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" className="text-gray-700"><circle cx="9" cy="21" r="1"></circle><circle cx="20" cy="21" r="1"></circle><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"></path></svg>
                                             <p>{t.cart.empty}</p>
                                         </div>
+                                    ) : (
+                                        <>
+                                            {/* Voucher Input */}
+                                            <div className="pt-4 border-t border-gray-900">
+                                                <h4 className="text-[10px] uppercase tracking-widest text-[#D4AF37] mb-2 font-bold">Voucher Diskon</h4>
+                                                
+                                                {appliedVoucher ? (
+                                                    <div className="flex items-center justify-between bg-green-950/20 border border-green-500/30 rounded-xl p-3 text-xs text-green-400">
+                                                        <div className="flex items-center gap-2">
+                                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+                                                            <span>Voucher <strong>{appliedVoucher.code}</strong> Terpasang!</span>
+                                                        </div>
+                                                        <button 
+                                                            type="button" 
+                                                            onClick={handleRemoveVoucher}
+                                                            className="text-[10px] uppercase font-bold text-red-400 hover:text-red-300 ml-4"
+                                                        >
+                                                            Hapus
+                                                        </button>
+                                                    </div>
+                                                ) : (
+                                                    <div className="flex gap-2">
+                                                        <input 
+                                                            type="text" 
+                                                            value={voucherInput}
+                                                            onChange={e => setVoucherInput(e.target.value)}
+                                                            placeholder="Masukkan kode voucher..." 
+                                                            className="flex-1 bg-[#111] border border-gray-800 focus:border-[#D4AF37]/50 rounded-xl text-xs px-3 py-2 text-white placeholder-gray-600 outline-none transition-all"
+                                                        />
+                                                        <button 
+                                                            type="button"
+                                                            onClick={() => handleApplyVoucher()}
+                                                            className="px-4 py-2 bg-gradient-to-br from-[#FDE08B] to-[#D4AF37] text-black font-semibold text-xs rounded-xl hover:shadow-[0_0_10px_rgba(212,175,55,0.3)] transition-all"
+                                                        >
+                                                            Gunakan
+                                                        </button>
+                                                    </div>
+                                                )}
+                                                {voucherError && <p className="text-[10px] text-red-500 mt-1.5 ml-1">{voucherError}</p>}
+                                            </div>
+
+                                            {/* Vouchers list "Voucher untuk Anda" */}
+                                            {coupons.length > 0 && (
+                                                <div className="pt-4 border-t border-gray-900">
+                                                    <h4 className="text-[10px] uppercase tracking-widest text-[#D4AF37] mb-2.5 font-bold">Voucher Untuk Anda ✦</h4>
+                                                    <div className="flex flex-col gap-2">
+                                                        {coupons.map((coupon) => {
+                                                            const isThisApplied = appliedVoucher?.id === coupon.id;
+                                                            return (
+                                                                <div 
+                                                                    key={coupon.id} 
+                                                                    onClick={() => {
+                                                                        if (isThisApplied) {
+                                                                            handleRemoveVoucher();
+                                                                        } else {
+                                                                            handleApplyVoucher(coupon.code);
+                                                                        }
+                                                                    }}
+                                                                    className={`flex justify-between items-center bg-[#111] hover:bg-[#151515] p-2.5 rounded-xl border cursor-pointer transition-colors ${
+                                                                        isThisApplied ? 'border-green-500/50' : 'border-gray-800 hover:border-[#D4AF37]/30'
+                                                                    }`}
+                                                                >
+                                                                    <div className="min-w-0">
+                                                                        <div className="text-xs font-mono font-bold text-white tracking-wider flex items-center gap-1.5">
+                                                                            {coupon.code}
+                                                                            {isThisApplied && <span className="w-1.5 h-1.5 bg-green-500 rounded-full"></span>}
+                                                                        </div>
+                                                                        <div className="text-[10px] text-gray-500 mt-0.5">
+                                                                            {coupon.type === 'percent' ? `Diskon ${Math.floor(coupon.value)}%` : `Diskon ${formatRupiah(coupon.value)}`}
+                                                                        </div>
+                                                                    </div>
+                                                                    <button className={`text-[10px] uppercase font-bold border px-2.5 py-1 rounded-lg transition-colors ${
+                                                                        isThisApplied 
+                                                                            ? 'border-green-500/30 text-green-400 bg-green-950/10' 
+                                                                            : 'border-[#D4AF37]/20 text-[#D4AF37] hover:border-[#D4AF37]'
+                                                                    }`}>
+                                                                        {isThisApplied ? 'Terpasang' : 'Gunakan'}
+                                                                    </button>
+                                                                </div>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </>
                                     )}
                                 </div>
 
                                 <div className="p-6 border-t border-gray-800 bg-[#111]">
+                                    {appliedVoucher && cartItemCount > 0 && (
+                                        <div className="flex flex-col gap-2 mb-4 text-xs border-b border-gray-800 pb-4">
+                                            <div className="flex justify-between text-gray-400">
+                                                <span>Subtotal</span>
+                                                <span>{formatRupiah(cartTotal)}</span>
+                                            </div>
+                                            <div className="flex justify-between text-green-500">
+                                                <span>Potongan Voucher ({appliedVoucher.code})</span>
+                                                <span>
+                                                    -{formatRupiah(
+                                                        appliedVoucher.type === 'percent' 
+                                                            ? cartTotal * (parseFloat(appliedVoucher.value) / 100) 
+                                                            : parseFloat(appliedVoucher.value)
+                                                    )}
+                                                </span>
+                                            </div>
+                                        </div>
+                                    )}
                                     <div className="flex justify-between items-end mb-6">
                                         <span className="text-gray-400 text-sm">{t.cart.total} ({cartItemCount} {t.cart.items})</span>
-                                        <span className="text-3xl font-serif text-[#D4AF37] leading-none">{formatRupiah(cartTotal)}</span>
+                                        <span className="text-3xl font-serif text-[#D4AF37] leading-none">
+                                            {formatRupiah(
+                                                appliedVoucher && cartItemCount > 0
+                                                    ? Math.max(0, cartTotal - (appliedVoucher.type === 'percent' ? cartTotal * (parseFloat(appliedVoucher.value) / 100) : parseFloat(appliedVoucher.value)))
+                                                    : cartTotal
+                                            )}
+                                        </span>
                                     </div>
                                     <button 
                                         onClick={handleWhatsAppCheckout}
@@ -1009,7 +1245,9 @@ export default function Welcome({ auth, laravelVersion, phpVersion, products }) 
                                         <h2 className="text-2xl font-serif text-white mb-4">{selectedProduct.name.includes('|') ? selectedProduct.name.split('|')[1].trim() : selectedProduct.name}</h2>
                                         <p className="text-gray-400 text-sm leading-relaxed mb-6">{selectedProduct.description}</p>
                                         <div className="flex flex-wrap gap-3 mb-6">
-                                            <span className="text-[10px] uppercase tracking-widest border border-[#D4AF37]/30 text-[#D4AF37]/80 px-3 py-1 rounded-full">{selectedProduct.category}</span>
+                                            <span className="text-[10px] uppercase tracking-widest border border-[#D4AF37]/30 text-[#D4AF37]/80 px-3 py-1 rounded-full">
+                                                {selectedProduct.category?.title || (typeof selectedProduct.category === 'string' ? selectedProduct.category : 'Uncategorized')}
+                                            </span>
                                             <span className={`text-[10px] uppercase tracking-widest px-3 py-1 rounded-full border ${ selectedProduct.stock <= 5 ? 'border-red-500/50 text-red-400' : 'border-green-500/30 text-green-400' }`}>{selectedProduct.stock <= 5 ? `${t.catalog.left} ${selectedProduct.stock}` : 'In Stock'}</span>
                                         </div>
                                     </div>
@@ -1027,6 +1265,141 @@ export default function Welcome({ auth, laravelVersion, phpVersion, products }) 
                         </div>
                     )}
                 </AnimatePresence>
+
+                {/* ── AI CHAT ASSISTANT ── */}
+                <div className="fixed bottom-8 left-8 z-50 flex flex-col items-start">
+                    {/* Tooltip badge */}
+                    <AnimatePresence>
+                        {!isAIChatOpen && (
+                            <motion.div
+                                initial={{ opacity: 0, scale: 0.8, x: -10 }}
+                                animate={{ opacity: 1, scale: 1, x: 0 }}
+                                exit={{ opacity: 0, scale: 0.8, x: -10 }}
+                                transition={{ delay: 1 }}
+                                className="mb-2.5 ml-2 px-3 py-1.5 bg-[#0a0a0a] border border-[#D4AF37]/30 text-white rounded-xl text-[10px] uppercase tracking-wider font-semibold shadow-lg flex items-center gap-1.5 pointer-events-none"
+                            >
+                                <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></span>
+                                Tanya AI Guide ✦
+                            </motion.div>
+                        )}
+                    </AnimatePresence>
+
+                    {/* Floating Button */}
+                    <button
+                        onClick={() => setIsAIChatOpen(!isAIChatOpen)}
+                        className={`w-14 h-14 rounded-full flex items-center justify-center shadow-[0_10px_30px_rgba(212,175,55,0.3)] hover:scale-110 transition-all z-50 border ${
+                            isAIChatOpen 
+                                ? 'bg-black border-red-500/30 text-red-500 hover:text-red-400' 
+                                : 'bg-gradient-to-br from-[#FDE08B] to-[#D4AF37] border-[#AA8529] text-black'
+                        }`}
+                        title="Tanya AI Asisten"
+                    >
+                        {isAIChatOpen ? (
+                            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                        ) : (
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path><path d="M12 7v4"></path><path d="M12 15h.01"></path></svg>
+                        )}
+                    </button>
+
+                    {/* Chat Panel */}
+                    <AnimatePresence>
+                        {isAIChatOpen && (
+                            <motion.div
+                                initial={{ opacity: 0, y: 30, scale: 0.95 }}
+                                animate={{ opacity: 1, y: 0, scale: 1 }}
+                                exit={{ opacity: 0, y: 30, scale: 0.95 }}
+                                transition={{ type: 'spring', damping: 22 }}
+                                className="absolute bottom-20 left-0 w-[350px] sm:w-[380px] h-[480px] bg-[#0a0a0a]/95 border border-[#D4AF37]/20 rounded-2xl flex flex-col shadow-[0_20px_50px_rgba(0,0,0,0.7)] overflow-hidden z-40 backdrop-blur-md"
+                            >
+                                {/* Header */}
+                                <div className="p-4 border-b border-gray-800 bg-[#111] flex justify-between items-center">
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                                        <span className="font-serif text-[#D4AF37] text-sm font-semibold tracking-wider">Diena AI Guide ✦</span>
+                                    </div>
+                                    <button onClick={() => setIsAIChatOpen(false)} className="text-gray-400 hover:text-white transition-colors bg-gray-900/60 p-1.5 rounded-full">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                                    </button>
+                                </div>
+
+                                {/* Messages Area */}
+                                <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-4 bg-gradient-to-b from-black to-[#0a0a0a] scrollbar-thin">
+                                    {aiMessages.map((msg, idx) => (
+                                        <div key={idx} className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
+                                            <div className="flex flex-col max-w-[85%]">
+                                                <div className={`px-4 py-2.5 text-xs leading-relaxed ${
+                                                    msg.sender === 'user'
+                                                        ? 'bg-[#D4AF37]/10 border border-[#D4AF37]/30 text-white rounded-2xl rounded-tr-none'
+                                                        : 'bg-[#151515] border border-gray-800 text-gray-200 rounded-2xl rounded-tl-none'
+                                                }`}>
+                                                    {formatMessageText(msg.text)}
+                                                </div>
+
+                                                {/* Recommended Products cards underneath */}
+                                                {msg.products && msg.products.length > 0 && (
+                                                    <div className="flex flex-col gap-2 mt-2">
+                                                        {msg.products.map((prod) => (
+                                                            <div 
+                                                                key={prod.id} 
+                                                                onClick={() => { setSelectedProduct(prod); setIsAIChatOpen(false); }}
+                                                                className="flex gap-3 items-center bg-black/60 hover:bg-[#151515] p-2 rounded-xl border border-[#D4AF37]/10 hover:border-[#D4AF37]/35 cursor-pointer transition-all active:scale-[0.98]"
+                                                            >
+                                                                <div className="w-10 h-10 bg-[#111] rounded-lg overflow-hidden flex items-center justify-center p-0.5 border border-gray-900 flex-shrink-0">
+                                                                    <img src={prod.image} className="w-full h-full object-contain mix-blend-screen" alt="" />
+                                                                </div>
+                                                                <div className="flex-1 min-w-0">
+                                                                    <h5 className="text-[11px] font-serif text-white font-bold truncate">
+                                                                        {prod.name.includes('|') ? prod.name.split('|')[1].trim() : prod.name}
+                                                                    </h5>
+                                                                    <div className="text-[10px] text-[#D4AF37] font-semibold mt-0.5">{formatRupiah(prod.price)}</div>
+                                                                </div>
+                                                                <div className="text-[#D4AF37]/60 hover:text-[#D4AF37] p-1 flex-shrink-0">
+                                                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+                                                                </div>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    ))}
+                                    {isAILoading && (
+                                        <div className="flex justify-start">
+                                            <div className="bg-[#151515] border border-gray-800 rounded-2xl rounded-tl-none px-4 py-3 flex items-center">
+                                                <div className="flex gap-1.5 py-0.5">
+                                                    <motion.div animate={{ y: [0, -4, 0] }} transition={{ repeat: Infinity, duration: 0.6, delay: 0 }} className="w-1.5 h-1.5 bg-[#D4AF37] rounded-full"></motion.div>
+                                                    <motion.div animate={{ y: [0, -4, 0] }} transition={{ repeat: Infinity, duration: 0.6, delay: 0.15 }} className="w-1.5 h-1.5 bg-[#D4AF37] rounded-full"></motion.div>
+                                                    <motion.div animate={{ y: [0, -4, 0] }} transition={{ repeat: Infinity, duration: 0.6, delay: 0.3 }} className="w-1.5 h-1.5 bg-[#D4AF37] rounded-full"></motion.div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+                                    <div ref={chatEndRef} />
+                                </div>
+
+                                {/* Input Form */}
+                                <div className="p-3 border-t border-gray-800 bg-[#111]">
+                                    <form onSubmit={handleSendAIMessage} className="flex gap-2 items-center bg-black border border-gray-800 focus-within:border-[#D4AF37]/50 rounded-xl px-3 py-1.5 transition-all">
+                                        <input 
+                                            type="text" 
+                                            value={aiInput} 
+                                            onChange={(e) => setAiInput(e.target.value)} 
+                                            placeholder="Tanyakan rekomendasi aroma..." 
+                                            className="flex-1 bg-transparent border-0 outline-none focus:ring-0 text-white text-xs px-1 py-1 placeholder-gray-600"
+                                        />
+                                        <button 
+                                            type="submit" 
+                                            disabled={!aiInput.trim() || isAILoading} 
+                                            className="text-[#D4AF37] hover:text-[#FDE08B] disabled:opacity-30 disabled:hover:text-[#D4AF37] p-1.5 rounded-lg transition-colors flex-shrink-0"
+                                        >
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+                                        </button>
+                                    </form>
+                                </div>
+                            </motion.div>
+                        )}
+                    </AnimatePresence>
+                </div>
             </div>
         </>
     );

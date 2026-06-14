@@ -4,12 +4,15 @@ namespace Database\Seeders;
 
 use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
+use App\Models\Product;
+use App\Models\Category;
+use App\Models\Brand;
+use Illuminate\Support\Str;
 
 class ProductSeeder extends Seeder
 {
     public function run(): void
     {
-        // 11 local perfume images, rotated across all 30 products
         $allImages = [
             '/images/elysian_scent.png',
             '/images/oud_imperial.png',
@@ -24,7 +27,6 @@ class ProductSeeder extends Seeder
             '/images/midnight_lavender.png',
         ];
 
-        $categories = ['sweet', 'strong', 'vanilla'];
         $faker = \Faker\Factory::create();
 
         $aromaNames = [
@@ -40,24 +42,56 @@ class ProductSeeder extends Seeder
 
         $notes = ['Bergamot', 'Patchouli', 'Neroli', 'Vetiver', 'Cardamom', 'Ylang-Ylang', 'Tonka Bean', 'Leather', 'Jasmine', 'Oud', 'Rose', 'Vanilla', 'Sandalwood', 'Musk'];
 
-        $products = [];
+        // Get categories and brands
+        $womenCategory = Category::where('slug', 'womens-fragrance')->first();
+        $menCategory = Category::where('slug', 'mens-fragrance')->first();
+        $unisexCategory = Category::where('slug', 'unisex-fragrance')->first();
+        $brands = Brand::all();
+
+        if (!$brands->count() || !$womenCategory || !$menCategory || !$unisexCategory) {
+            $this->command->warn('Please run BrandSeeder and CategorySeeder first!');
+            return;
+        }
 
         for ($i = 0; $i < 30; $i++) {
             $note1 = $faker->randomElement($notes);
             $note2 = $faker->randomElement($notes);
+            $aromaName = $aromaNames[$i];
+            
+            // Distribute: 10 Women, 10 Men, 10 Unisex
+            $categoryIndex = ($i % 3);
+            if ($categoryIndex === 0) {
+                $category = $womenCategory;
+            } elseif ($categoryIndex === 1) {
+                $category = $menCategory;
+            } else {
+                $category = $unisexCategory;
+            }
+            $brand = $brands->random();
 
-            $products[] = [
-                'name'        => "Diena Parfume | " . $aromaNames[$i],
-                'description' => "A masterfully crafted signature scent by Diena Parfume, blending top notes of {$note1} with base notes of {$note2} for a truly unique and unforgettable experience.",
-                'price'       => $faker->numberBetween(18, 60) * 100000,
-                'image'       => $allImages[$i % count($allImages)],
-                'stock'       => $faker->numberBetween(5, 25),
-                'category'    => $categories[$i % 3],
-            ];
+            $price = $faker->numberBetween(18, 60) * 100000;
+            $slug = Str::slug($aromaName);
+            $sku = 'DIENA-' . Str::upper(Str::random(6));
+
+            Product::create([
+                'name'           => "Diena Parfume | {$aromaName}",
+                'title'          => $aromaName,
+                'slug'           => $slug,
+                'description'    => "A masterfully crafted signature scent by Diena Parfume, blending top notes of {$note1} with base notes of {$note2} for a truly unique and unforgettable experience.",
+                'summary'        => "Premium {$aromaName} by Diena Parfume",
+                'price'          => $price,
+                'original_price' => $price * $faker->randomFloat(2, 1.1, 1.5),
+                'image'          => $allImages[$i % count($allImages)],
+                'photo'          => $allImages[$i % count($allImages)],
+                'stock'          => $faker->numberBetween(5, 25),
+                'category_id'    => $category->id,
+                'brand_id'       => $brand->id,
+                'sku'            => $sku,
+                'status'         => 'active',
+            ]);
         }
 
-        foreach ($products as $product) {
-            \App\Models\Product::create($product);
-        }
+        $this->command->info('30 Diena Parfume products created successfully!');
     }
 }
+
